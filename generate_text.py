@@ -1,7 +1,5 @@
 from llms_from_scratch.ch05 import generate
 import time
-
-
 from pathlib import Path
 import torch
 from safetensors.torch import load_file

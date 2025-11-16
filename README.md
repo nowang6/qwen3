@@ -1,0 +1,1 @@
+python export_onnx_qwen3.py --device_str cpu --dtype float32 --model_path models/Qwen3-0.6B --onnx_model_path output/onnx/qwen3_0.6b.onnx

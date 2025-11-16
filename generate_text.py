@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 from safetensors.torch import load_file
 
-from llms_from_scratch.qwen3 import Qwen3Model, QWEN_CONFIG_06_B, load_weights_into_qwen
+from llms_from_scratch.qwen3 import Qwen3Model, QWEN_CONFIG_06_B, load_weights_into_qwen, Qwen3Tokenizer
 
 model_path= "models/Qwen3-0.6B"
 
@@ -19,14 +19,12 @@ load_weights_into_qwen(model, QWEN_CONFIG_06_B, weights_dict)
 
 device = (
     torch.device("cuda") if torch.cuda.is_available() else
-    torch.device("mps") if torch.backends.mps.is_available() else
     torch.device("cpu")
 )
 print(f"Using device: {device}")
 model.to(device);
 model.eval()  # Set to evaluation mode
 
-from llms_from_scratch.qwen3 import Qwen3Tokenizer
 
 USE_INSTRUCT_MODEL = False
 USE_REASONING_MODEL = True

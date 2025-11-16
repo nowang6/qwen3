@@ -12,6 +12,7 @@ model_path= "models/Qwen3-0.6B"
 
 model_file = Path(model_path,"model.safetensors")
 
+print("Loading model...")
 model = Qwen3Model(QWEN_CONFIG_06_B)
 weights_dict = load_file(model_file)
 load_weights_into_qwen(model, QWEN_CONFIG_06_B, weights_dict)
@@ -21,7 +22,9 @@ device = (
     torch.device("mps") if torch.backends.mps.is_available() else
     torch.device("cpu")
 )
+print(f"Using device: {device}")
 model.to(device);
+model.eval()  # Set to evaluation mode
 
 from llms_from_scratch.qwen3 import Qwen3Tokenizer
 
@@ -34,6 +37,7 @@ if USE_REASONING_MODEL:
 else:
     tok_filename = "tokenizer-base.json"   
 
+print("Loading tokenizer...")
 tokenizer = Qwen3Tokenizer(
     tokenizer_file_path=Path(model_path,"tokenizer.json"),
     repo_id=model_path,
@@ -44,17 +48,24 @@ tokenizer = Qwen3Tokenizer(
 
 prompt = "Give me a short introduction to large language models."
 input_token_ids = tokenizer.encode(prompt)
-
+print(f"Input prompt: {prompt}")
+print(f"Input token count: {len(input_token_ids)}")
 
 torch.manual_seed(123)
 
+# Use a more reasonable context size - use actual input length + some buffer
+# Instead of the full 40960, which is too large for CPU
+actual_context_size = min(len(input_token_ids) + 150, 2048)  # Reasonable size for CPU
+print(f"Using context size: {actual_context_size} (max: {QWEN_CONFIG_06_B['context_length']})")
+
 start = time.time()
+print("\nStarting generation...")
 
 output_token_ids = generate(
     model=model,
     idx=torch.tensor(input_token_ids, device=device).unsqueeze(0),
     max_new_tokens=150,
-    context_size=QWEN_CONFIG_06_B["context_length"],
+    context_size=actual_context_size,
     top_k=1,
     temperature=0.
 )

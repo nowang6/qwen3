@@ -16,7 +16,7 @@ from tqdm import tqdm
 def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=None, eos_id=None):
 
     # For-loop is the same as before: Get logits, and only focus on last time step
-    for _ in range(max_new_tokens):
+    for i in tqdm(range(max_new_tokens), desc="Generating tokens"):
         idx_cond = idx[:, -context_size:]
         with torch.no_grad():
             logits = model(idx_cond)

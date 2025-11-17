@@ -8,21 +8,8 @@ from llms_from_scratch.qwen3 import Qwen3Model, QWEN_CONFIG_06_B, load_weights_i
 
 
 def load_qwen3_model_and_tokenizer(
-    model_path: str = "models/Qwen3-0.6B",
-    use_instruct_model: bool = False,
-    use_reasoning_model: bool = True
+    model_path: str = "models/Qwen3-0.6B"
 ):
-    """
-    Load Qwen3 model and tokenizer.
-    
-    Args:
-        model_path: Path to the model directory
-        use_instruct_model: Whether to use instruct model
-        use_reasoning_model: Whether to use reasoning model
-    
-    Returns:
-        tuple: (model, tokenizer, device)
-    """
     model_file = Path(model_path, "model.safetensors")
     
     print("Loading model...")
@@ -38,21 +25,16 @@ def load_qwen3_model_and_tokenizer(
     model.to(device)
     model.eval()  # Set to evaluation mode
     
-    if use_reasoning_model:
-        tok_filename = "tokenizer.json"    
-    else:
-        tok_filename = "tokenizer-base.json"   
-    
     print("Loading tokenizer...")
     tokenizer = Qwen3Tokenizer(
         tokenizer_file_path=Path(model_path, "tokenizer.json"),
         repo_id=model_path,
-        apply_chat_template=use_reasoning_model,
-        add_generation_prompt=use_reasoning_model,
-        add_thinking=not use_instruct_model
+        apply_chat_template=True,
+        add_generation_prompt=True,
+        add_thinking=True
     )
     
-    return model, tokenizer, device
+    return model, tokenizer
 
 
 def generate_text(

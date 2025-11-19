@@ -12,3 +12,6 @@ uv.lock
 
 # Models
 models/
+
+
+output/

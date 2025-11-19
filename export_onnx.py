@@ -45,7 +45,7 @@ example_input = torch.tensor(input_token_ids, device=device).unsqueeze(0)
 print(f"Example input shape: {example_input.shape}")
 
 # Export to ONNX
-onnx_model_path = "qwen3_0.6b.onnx"
+onnx_model_path = "output/qwen3_0.6b_orig.onnx"
 print(f"\nExporting to ONNX format...")
 
 input_names = ["input_ids"]
@@ -84,7 +84,7 @@ except Exception as e:
 # Optimize model with onnxslim
 print(f"\nOptimizing model with onnxslim...")
 slimmed_model = onnxslim.slim(onnx_model)
-slimmed_model_path = "qwen3_0.6b_slimmed.onnx"
+slimmed_model_path = "output/qwen3_0.6b.onnx"
 onnx.save(slimmed_model, slimmed_model_path)
 print(f"Slimmed ONNX model saved to: {slimmed_model_path}")
 

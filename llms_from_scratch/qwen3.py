@@ -19,13 +19,14 @@ QWEN_CONFIG_06_B = {
     "context_length": 40_960,        # Context length that was used to train the model
     "emb_dim": 1024,                 # Embedding dimension
     "n_heads": 16,                   # Number of attention heads
-    "n_layers": 28,                  # Number of layers
+    #"n_layers": 28,                  # Number of layers
+    "n_layers": 28,
     "hidden_dim": 3072,              # Size of the intermediate dimension in FeedForward
     "head_dim": 128,                 # Size of the heads in GQA
     "qk_norm": True,                 # Whether to normalize queries and keys in GQA
     "n_kv_groups": 8,                # Key-Value groups for grouped-query attention
     "rope_base": 1_000_000.0,        # The base in RoPE's "theta"
-    "dtype": torch.bfloat16,         # Lower-precision dtype to reduce memory usage
+    "dtype": torch.float16,         # Lower-precision dtype to reduce memory usage
 }
 
 # 1.7 billion parameters
@@ -153,7 +154,10 @@ class Qwen3Model(nn.Module):
         x = tok_embeds
 
         num_tokens = x.shape[1]
-        mask = torch.triu(torch.ones(num_tokens, num_tokens, device=x.device, dtype=torch.bool), diagonal=1)
+        # Create causal mask without using triu operator
+        row_indices = torch.arange(num_tokens, device=x.device).unsqueeze(1)
+        col_indices = torch.arange(num_tokens, device=x.device).unsqueeze(0)
+        mask = (row_indices < col_indices)
 
         for block in self.trf_blocks:
             x = block(x, mask, self.cos, self.sin)

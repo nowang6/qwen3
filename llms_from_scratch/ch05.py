@@ -55,3 +55,53 @@ def generate(model, idx, max_new_tokens, context_size, temperature=0.0, top_k=No
 
     return idx
 
+
+def generate_one_token(model, idx, context_size, temperature=0.0, top_k=None, eos_id=None):
+    """
+    Generate a single token from the model.
+    
+    Args:
+        model: The language model
+        idx: Input token indices, shape (batch_size, seq_len)
+        context_size: Maximum context size to use
+        temperature: Sampling temperature (0.0 for greedy, >0.0 for sampling)
+        top_k: If specified, only sample from top_k tokens
+        eos_id: End-of-sequence token ID (for checking, but not used to stop in single token generation)
+    
+    Returns:
+        idx_next: Next token index, shape (batch_size, 1)
+    """
+    # Get the last context_size tokens
+    idx_cond = idx[:, -context_size:]
+    
+    # Get logits from model
+    with torch.no_grad():
+        logits = model(idx_cond)
+    logits = logits[:, -1, :]  # Focus on last time step
+    
+    # Filter logits with top_k sampling
+    if top_k is not None:
+        # Keep only top_k values
+        top_logits, _ = torch.topk(logits, top_k)
+        min_val = top_logits[:, -1]
+        logits = torch.where(logits < min_val, torch.tensor(float("-inf")).to(logits.device), logits)
+    
+    # Apply temperature scaling
+    if temperature > 0.0:
+        logits = logits / temperature
+        
+        # Numerical stability: subtract rowwise max before softmax
+        logits = logits - logits.max(dim=-1, keepdim=True).values
+        
+        # Apply softmax to get probabilities
+        probs = torch.softmax(logits, dim=-1)  # (batch_size, vocab_size)
+        
+        # Sample from the distribution
+        idx_next = torch.multinomial(probs, num_samples=1)  # (batch_size, 1)
+    
+    # Otherwise: get idx of the vocab entry with the highest logits value
+    else:
+        idx_next = torch.argmax(logits, dim=-1, keepdim=True)  # (batch_size, 1)
+    
+    return idx_next
+

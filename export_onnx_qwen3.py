@@ -89,7 +89,7 @@ if __name__ == "__main__":
     
     export_onnx(
         model=model,
-        device_str="cuda",
+        device_str="cpu",
         seq_length=2048,
         batch_size=1,
         model_config=QWEN_CONFIG_06_B,

@@ -1,213 +1,97 @@
-"""_summary_
-qwen2 modeling_qwen2.py download: https://github.com/huggingface/transformers/blob/v4.37.0/src/transformers/models/qwen2/modeling_qwen2.py
-"""
-
-import os
-import json
-import sys
-from typing import List
+from pathlib import Path
 import torch
-import shutil
-
-
+from safetensors.torch import load_file
 import onnx
-import io
-import argparse
+import onnxslim
 
+from llms_from_scratch.qwen3 import Qwen3Model, QWEN_CONFIG_06_B, load_weights_into_qwen, Qwen3Tokenizer
 
-now_dir = os.path.dirname(os.path.abspath(__file__))
-project_dir = os.path.dirname(now_dir)
-output_dir = os.path.join(project_dir, "output")
-if not os.path.exists(output_dir):
-    os.mkdir(output_dir)
-onnx_model_dir = os.path.join(output_dir, "onnx")
-if not os.path.exists(onnx_model_dir):
-    os.mkdir(onnx_model_dir)
-if len(os.listdir(onnx_model_dir)) > 0:
-    print("found some file in {}, will clear it".format(onnx_model_dir))
-    for temp_file in os.listdir(onnx_model_dir):
-        temp_path = os.path.join(onnx_model_dir, temp_file)
-        os.remove(temp_path)
+model_path = "models/Qwen3-0.6B"
 
+# Load model (same as generate_text.py)
+model_file = Path(model_path, "model.safetensors")
 
-def parser_arguments():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--device_str",
-        type=str,
-        choices=["npu", "cuda", "cpu"],
-        help="support npu, cuda, cpu",
-        default="cpu",
+print("Loading model...")
+model = Qwen3Model(QWEN_CONFIG_06_B)
+weights_dict = load_file(model_file)
+load_weights_into_qwen(model, QWEN_CONFIG_06_B, weights_dict)
+
+device = (
+    torch.device("cuda") if torch.cuda.is_available() else
+    torch.device("cpu")
+)
+print(f"Using device: {device}")
+model.to(device)
+model.eval()  # Set to evaluation mode
+
+# Load tokenizer to create example input
+print("Loading tokenizer...")
+tokenizer = Qwen3Tokenizer(
+    tokenizer_file_path=Path(model_path, "tokenizer.json"),
+    repo_id=model_path,
+    apply_chat_template=True,
+    add_generation_prompt=True,
+    add_thinking=True
+)
+
+# Prepare example input (similar to generate_text.py)
+prompt = "Give me a short introduction to large language models."
+input_token_ids = tokenizer.encode(prompt)
+print(f"Input prompt: {prompt}")
+print(f"Input token count: {len(input_token_ids)}")
+
+# Create input tensor
+example_input = torch.tensor(input_token_ids, device=device).unsqueeze(0)
+print(f"Example input shape: {example_input.shape}")
+
+# Export to ONNX
+onnx_model_path = "qwen3_0.6b.onnx"
+print(f"\nExporting to ONNX format...")
+
+input_names = ["input_ids"]
+output_names = ["logits"]
+
+# Define dynamic axes for variable sequence length
+dynamic_axes = {
+    "input_ids": {0: "batch_size", 1: "seq_length"},
+    "logits": {0: "batch_size", 1: "seq_length"},
+}
+
+with torch.no_grad():
+    torch.onnx.export(
+        model,
+        args=(example_input,),
+        f=onnx_model_path,
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
+        do_constant_folding=False,
+        opset_version=14,
+        export_params=True,
+        verbose=False
     )
-    parser.add_argument(
-        "--dtype" ,
-        type=str,
-        help="support float16/float32, if use CPU, only support fp32",
-        choices=["float16", "float32"],
-        default="float32",
-    )
-    parser.add_argument(
-        '--hf_model_dir',
-        type=str,
-        help="model and tokenizer path, only support huggingface model",
-        default=os.path.join(project_dir, "download", "Qwen2-1.5B-Instruct")
-    )
-    parser.add_argument(
-        "--onnx_model_path",
-        help="output onnx path",
-        type=str,
-        default=os.path.join(onnx_model_dir, "qwen2_1.5b_chat.onnx")
-    )
-    parser.add_argument(
-        "--kv_cache_length",
-        help="kv-cache length",
-        type=int,
-        default=2048,
-    )
-    return parser.parse_args()
 
+print(f"ONNX model exported to: {onnx_model_path}")
 
-def export_onnx(
-    device_str,
-    dtype: str,
-    hf_model_dir: str,
-    onnx_model_path: str,
-    kv_cache_length: int,
-    num_hidden_layers: int,
-    num_key_value_heads: int,
-    per_head_dim: int,
-):
-    if device_str == "npu":
-        import torch_npu
-    if dtype == "float16":
-        assert device_str.lower() != "cpu", print("cpu not support fp16")
-        torch_dtype = torch.float16
-    elif dtype == "float32":
-        torch_dtype = torch.float32
-    else:
-        raise Exception("unsupport dtype")
+# Verify the exported model
+try:
+    onnx_model = onnx.load(onnx_model_path)
+    onnx.checker.check_model(onnx_model)
+    print("ONNX model verification passed!")
+except Exception as e:
+    print(f"Warning: ONNX model verification failed: {e}")
 
-    device = torch.device(device_str)
-    model = Qwen2ForCausalLM.from_pretrained(
-        hf_model_dir,
-        torch_dtype=torch_dtype,
-        # trust_remote_code=True
-    ).to(device)
-    quantize_cfg = {
-        "query_key_value": {
-            "type": "W8X8",
-            "act_scale": False
-        },
-        "dense": {
-            "type": "W8X8",
-            "act_scale": False
-        },
-        "dense_h_to_4h": {
-            "type": "W8X8",
-            "act_scale": False
-        },
-        "dense_4h_to_h": {
-            "type": "W8X8",
-            "act_scale": False
-        }
-    }
-    quantize_cfg = {}
-    input_names = [
-        "input_ids",
-        "attention_mask",
-        "position_ids",
-        "past_key_values"
-    ]
-    output_names = ["logits", "out_key_values"]
-    dynamic_axes = {
-        "input_ids": {0: "batch_size", 1: "seq_length"},
-        "attention_mask": {0: "batch_size", 1: "seq_length + kv_len"},
-        "position_ids": {0: "batch_size", 1: "seq_length"},
-        "past_key_values": {0: "batch_size", 1: "kv_len"},
-    }
-    batch_size = 1
-    seq_len = 1
-    all_len = seq_len + kv_cache_length
+# Optimize model with onnxslim
+print(f"\nOptimizing model with onnxslim...")
+slimmed_model = onnxslim.slim(onnx_model)
+slimmed_model_path = "qwen3_0.6b_slimmed.onnx"
+onnx.save(slimmed_model, slimmed_model_path)
+print(f"Slimmed ONNX model saved to: {slimmed_model_path}")
 
-    input_ids = torch.zeros((batch_size, seq_len)).long().to(device)
-    attention_mask = torch.zeros((batch_size, all_len)).long().to(device)
-    position_ids = torch.zeros((batch_size, seq_len)).long().to(device)
-    past_key_values = torch.rand(
-        (
-            1,
-            kv_cache_length,
-            num_hidden_layers * 2 * num_key_value_heads,
-            per_head_dim
-        ),
-        dtype=torch_dtype
-    ).to(device)
-    input_args = (
-        input_ids,
-        attention_mask,
-        position_ids,
-        past_key_values,
-        # None,  # inputs_embeds: Optional[torch.FloatTensor] = None,
-        # None,  # labels: Optional[torch.LongTensor] = None,
-        # True,  # use_cache: Optional[bool] = None,
-        # True,  # output_attentions: Optional[bool] = None,
-        # None,  # output_hidden_states
-        # False  # return_dict:
-    )
-    model.eval()
-    with torch.no_grad():
-        # from quantize import quantize
-        # quantize(model, cfg=quantize_cfg)
-        # print(model)
-        torch.onnx.export(
-            model,
-            f=onnx_model_path,
-            args=input_args,
-            input_names=input_names,
-            output_names=output_names,
-            dynamic_axes=dynamic_axes,
-            do_constant_folding=False,
-            opset_version=14,
-            export_params=True
-        )
+# Verify the slimmed model
+try:
+    onnx.checker.check_model(slimmed_model)
+    print("Slimmed ONNX model verification passed!")
+except Exception as e:
+    print(f"Warning: Slimmed ONNX model verification failed: {e}")
 
-
-if __name__ == "__main__":
-    args = parser_arguments()
-    # model_config = Qwen2Config.from_pretrained(args.hf_model_dir)
-    # copy modeling_qwen2.py to model dir
-    src_file_path = os.path.join(now_dir, "modeling_qwen2.py")
-    target_file_path = os.path.join(args.hf_model_dir, "modeling_qwen2.py")
-    shutil.copy(src_file_path, target_file_path)
-    # print(model_config)
-    config_json = os.path.join(args.hf_model_dir, "config.json")
-    with open(config_json, "rt", encoding="utf-8") as f:
-        model_config = json.load(f)
-    model_config["auto_map"] = {
-        "AutoModel": "modeling_qwen2.Qwen2ForCausalLM",
-        "AutoModelForCausalLM": "modeling_qwen2.Qwen2ForCausalLM",
-        "AutoModelForSeq2SeqLM": "modeling_qwen2.Qwen2ForCausalLM",
-        "AutoModelForSequenceClassification": "modeling_qwen2.Qwen2ForSequenceClassification"
-    }
-    with open(config_json, "wt", encoding="utf-8") as f:
-        json.dump(model_config, f, indent=4)
-    test_model_config = Qwen2Config.from_pretrained(args.hf_model_dir)
-    # print(test_model_config)
-    test_model_config.torch_dtype = "float16"
-    test_model_config.save_pretrained(args.hf_model_dir)
-    num_hidden_layers = test_model_config.num_hidden_layers
-    num_attention_heads = test_model_config.num_attention_heads
-    num_key_value_heads = test_model_config.num_key_value_heads
-    hidden_size = test_model_config.hidden_size
-    per_head_dim = hidden_size // num_attention_heads
-    print("new model config save ok in ", args.hf_model_dir)
-    print("begin export onnx")
-    export_onnx(
-        device_str=args.device_str,
-        dtype=args.dtype,
-        hf_model_dir=args.hf_model_dir,
-        onnx_model_path=args.onnx_model_path,
-        kv_cache_length=args.kv_cache_length,
-        num_hidden_layers=num_hidden_layers,
-        num_key_value_heads=num_key_value_heads,
-        per_head_dim=per_head_dim
-    )

@@ -18,7 +18,7 @@ def select_providers():
 
 def main():
     model_path = Path("models", "Qwen3-0.6B")
-    onnx_model_path = Path("qwen3_0.6b.onnx")
+    onnx_model_path = Path("output/qwen3_0.6b.onnx")
 
     print("Loading tokenizer...")
     tokenizer = Qwen3Tokenizer(

@@ -64,8 +64,8 @@ def export_embedding_to_onnx(
     emb = load_embedding_weights(model_path)
     emb.eval()
 
-    # Convert embedding weights to float32 for better ONNX compatibility
-    emb.weight.data = emb.weight.data.to(torch.float32)
+    # Keep original float16 precision for ONNX export
+    # emb.weight.data remains in float16
 
     # Dummy input: a small sequence of token ids
     dummy_input = torch.randint(
@@ -87,6 +87,11 @@ def export_embedding_to_onnx(
             "embeddings": {0: "batch_size", 1: "seq_len"},
         },
         opset_version=opset_version,
+        # Specify output type as float16
+        export_params=True,
+        do_constant_folding=True,
+        keep_initializers_as_inputs=False,
+        verbose=False,
     )
     print("ONNX export finished.")
 
@@ -144,9 +149,9 @@ def test_embedding_with_onnx(
     print(f"ONNX embedding dtype: {embeddings_onnx.dtype}")
     print(f"ONNX inference time: {elapsed_time:.4f}s")
 
-    # Compare with PyTorch implementation (using float32 for fair comparison)
+    # Compare with PyTorch implementation (using original float16)
     print("\nComparing with PyTorch implementation...")
-    embeddings_pytorch = test_embedding(prompt, model_path, use_float32=True)
+    embeddings_pytorch = test_embedding(prompt, model_path, use_float32=False)
 
     # Calculate similarity
     similarity = torch.nn.functional.cosine_similarity(

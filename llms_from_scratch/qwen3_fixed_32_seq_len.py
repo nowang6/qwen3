@@ -56,6 +56,7 @@ class Qwen3Model(nn.Module):
         if seq_len != 32:
             raise ValueError(f"Input sequence length must be exactly 32, got {seq_len}")
 
+
         # Forward pass
         tok_embeds = self.tok_emb(in_idx)
         x = tok_embeds

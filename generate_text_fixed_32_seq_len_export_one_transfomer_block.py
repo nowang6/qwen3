@@ -3,8 +3,28 @@ import time
 from pathlib import Path
 import torch
 from safetensors.torch import load_file
+import torch.nn as nn
 
-from llms_from_scratch.qwen3_fixed_32_seq_len import Qwen3Model, QWEN_CONFIG_06_B_FIXED_32, load_weights_into_qwen, Qwen3Tokenizer
+from llms_from_scratch.qwen3_fixed_32_seq_len import Qwen3Model, QWEN_CONFIG_06_B_FIXED_32, load_weights_into_qwen, Qwen3Tokenizer, TransformerBlock, RMSNorm
+
+class SingleTransformerBlock(nn.Module):
+    """Wrapper to export only the first transformer block"""
+    def __init__(self, model, block_index=0):
+        super().__init__()
+        self.block = model.trf_blocks[block_index]
+        # Pre-compute the causal mask for fixed 32 length
+        row_indices = torch.arange(32).unsqueeze(1)
+        col_indices = torch.arange(32).unsqueeze(0)
+        self.register_buffer('mask', (row_indices < col_indices), persistent=False)
+        # Use the pre-computed RoPE parameters from the original model
+        self.register_buffer('cos', model.cos, persistent=False)
+        self.register_buffer('sin', model.sin, persistent=False)
+
+    def forward(self, x):
+        # x: input embeddings [batch_size, 32, emb_dim]
+        # Apply the transformer block
+        x = self.block(x, self.mask, self.cos, self.sin)
+        return x
 
 def pad_or_truncate_to_32_tokens(token_ids, pad_token_id):
     """严格将token序列调整为32个token，不足补padding，超过截断"""
@@ -39,30 +59,35 @@ print(f"Using device: {device}")
 model.to(device);
 model.eval()  # Set to evaluation mode
 
-# Export model to ONNX format
-print("Exporting model to ONNX format...")
+# Export first transformer block to ONNX format
+print("Exporting first transformer block to ONNX format...")
 try:
-    # Define dummy input with fixed sequence length of 32
-    dummy_input = torch.randint(0, QWEN_CONFIG_06_B_FIXED_32['vocab_size'], (1, 32), device=device, dtype=torch.int32)
+    # Create wrapper for first transformer block
+    first_block = SingleTransformerBlock(model, block_index=0)
+    first_block.to(device)
+    first_block.eval()
+
+    # Define dummy input: embeddings [batch_size, 32, emb_dim]
+    dummy_input = torch.randn(1, 32, QWEN_CONFIG_06_B_FIXED_32['emb_dim'], device=device, dtype=torch.float16)
 
     # Define ONNX export path
-    onnx_path = Path(model_path, "qwen3_0.6b_fixed_32.onnx")
+    onnx_path = Path(model_path, "qwen3_0.6b_transformer_block_0.onnx")
 
     # Export to ONNX
     torch.onnx.export(
-        model,
+        first_block,
         dummy_input,
         str(onnx_path),
-        input_names=['input_ids'],
-        output_names=['logits'],
+        input_names=['embeddings'],
+        output_names=['output'],
         dynamic_axes={
-            'input_ids': {0: 'batch_size'},
-            'logits': {0: 'batch_size'}
+            'embeddings': {0: 'batch_size'},
+            'output': {0: 'batch_size'}
         },
         opset_version=11,
         do_constant_folding=True
     )
-    print(f"Model successfully exported to ONNX format: {onnx_path}")
+    print(f"Transformer block 0 successfully exported to ONNX format: {onnx_path}")
     print(f"ONNX model file size: {onnx_path.stat().st_size / (1024*1024):.2f} MB")
 except Exception as e:
     print(f"Error exporting to ONNX: {e}")

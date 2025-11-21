@@ -51,25 +51,23 @@ class Qwen3Model(nn.Module):
         self.cfg = cfg
 
     def forward(self, in_idx):
+        # 严格检查输入序列长度必须为32
+        batch_size, seq_len = in_idx.shape
+        if seq_len != 32:
+            raise ValueError(f"Input sequence length must be exactly 32, got {seq_len}")
+
         # Forward pass
         tok_embeds = self.tok_emb(in_idx)
         x = tok_embeds
 
-        num_tokens = x.shape[1]
-
-        # Ensure sequence length does not exceed fixed context length
-        if num_tokens > self.cfg["context_length"]:
-            x = x[:, -self.cfg["context_length"]:]
-            num_tokens = self.cfg["context_length"]
-
-        # Create causal mask without using triu operator
-        row_indices = torch.arange(num_tokens, device=x.device).unsqueeze(1)
-        col_indices = torch.arange(num_tokens, device=x.device).unsqueeze(0)
+        # 使用固定的32长度创建因果mask
+        row_indices = torch.arange(32, device=x.device).unsqueeze(1)
+        col_indices = torch.arange(32, device=x.device).unsqueeze(0)
         mask = (row_indices < col_indices)
 
-        # Use pre-computed RoPE parameters for fixed sequence length
-        cos = self.cos[:num_tokens, :]
-        sin = self.sin[:num_tokens, :]
+        # 使用预计算的固定32长度RoPE参数
+        cos = self.cos  # 已经是32长度的
+        sin = self.sin  # 已经是32长度的
 
         for block in self.trf_blocks:
             x = block(x, mask, cos, sin)
@@ -213,14 +211,19 @@ def compute_rope_params(head_dim, theta_base=10_000, context_length=4096, dtype=
 def apply_rope(x, cos, sin):
     # x: (batch_size, num_heads, seq_len, head_dim)
     batch_size, num_heads, seq_len, head_dim = x.shape
+
+    # 严格检查序列长度必须为32
+    if seq_len != 32:
+        raise ValueError(f"RoPE: Input sequence length must be exactly 32, got {seq_len}")
+
     assert head_dim % 2 == 0, "Head dimension must be even"
 
     # Split x into first half and second half
     x1 = x[..., : head_dim // 2]  # First half
     x2 = x[..., head_dim // 2:]  # Second half
 
-    # Use provided cos and sin (already sliced to correct sequence length)
-    cos = cos.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, seq_len, head_dim)
+    # 使用固定的32长度cos/sin参数
+    cos = cos.unsqueeze(0).unsqueeze(0)  # Shape: (1, 1, 32, head_dim)
     sin = sin.unsqueeze(0).unsqueeze(0)
 
     # Apply the rotary transformation

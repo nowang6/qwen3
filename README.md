@@ -23,3 +23,13 @@ python export_onnx_qwen3.py --device_str cpu --dtype float32 --model_path models
 --mode=1
 
 ```
+
+
+
+```sh
+./omg \
+  --framework=5 \
+  --model="qwen3_0.6b_transformer_block_0.onnx" \
+  --output="qwen3_0.6b_transformer_block_0" \
+  --input_shape="embeddings:1,32,1024"
+```

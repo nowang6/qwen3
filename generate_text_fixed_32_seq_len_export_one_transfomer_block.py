@@ -68,7 +68,7 @@ try:
     first_block.eval()
 
     # Define dummy input: embeddings [batch_size, 32, emb_dim]
-    dummy_input = torch.randn(1, 32, QWEN_CONFIG_06_B_FIXED_32['emb_dim'], device=device, dtype=torch.float16)
+    dummy_input = torch.randn(1, 32, QWEN_CONFIG_06_B_FIXED_32['emb_dim'], device=device, dtype=torch.float32)
 
     # Define ONNX export path
     onnx_path = Path(model_path, "qwen3_0.6b_transformer_block_0.onnx")

@@ -20,7 +20,7 @@ QWEN_CONFIG_06_B_FIXED_32 = {
     "qk_norm": True,                 # Whether to normalize queries and keys in GQA
     "n_kv_groups": 8,                # Key-Value groups for grouped-query attention
     "rope_base": 1_000_000.0,        # The base in RoPE's "theta"
-    "dtype": torch.float16,         # Lower-precision dtype to reduce memory usage
+    "dtype": torch.float32,         # Lower-precision dtype to reduce memory usage
 }
 
 class Qwen3Model(nn.Module):
@@ -73,7 +73,7 @@ class Qwen3Model(nn.Module):
         for block in self.trf_blocks:
             x = block(x, mask, cos, sin)
         x = self.final_norm(x)
-        logits = self.out_head(x.to(self.cfg["dtype"]))
+        logits = self.out_head(x)
         return logits
 
 
@@ -244,10 +244,6 @@ class RMSNorm(nn.Module):
         self.shift = nn.Parameter(torch.zeros(emb_dim)) if bias else None
 
     def forward(self, x):
-        input_dtype = x.dtype
-
-        if self.qwen3_compatible:
-            x = x.to(torch.float32)
 
         variance = x.pow(2).mean(dim=-1, keepdim=True)
         norm_x = x * torch.rsqrt(variance + self.eps)
@@ -256,7 +252,7 @@ class RMSNorm(nn.Module):
         if self.shift is not None:
             norm_x = norm_x + self.shift
 
-        return norm_x.to(input_dtype)
+        return norm_x
 
 
 def load_weights_into_qwen(model, param_config, params):

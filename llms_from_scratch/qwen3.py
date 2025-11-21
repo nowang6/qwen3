@@ -1,8 +1,3 @@
-# Copyright (c) Sebastian Raschka under Apache License 2.0 (see LICENSE.txt).
-# Source for "Build a Large Language Model From Scratch"
-#   - https://www.manning.com/books/build-a-large-language-model-from-scratch
-# Code: https://github.com/rasbt/LLMs-from-scratch
-
 import os
 import json
 import re
@@ -28,98 +23,6 @@ QWEN_CONFIG_06_B = {
     "rope_base": 1_000_000.0,        # The base in RoPE's "theta"
     "dtype": torch.float16,         # Lower-precision dtype to reduce memory usage
 }
-
-# 1.7 billion parameters
-QWEN3_CONFIG_1_7B = {
-    "vocab_size": 151_936,
-    "context_length": 40_960,
-    "emb_dim": 2048,                 # 2x larger than above
-    "n_heads": 16,
-    "n_layers": 28,
-    "hidden_dim": 6144,              # 2x larger than above
-    "head_dim": 128,
-    "qk_norm": True,
-    "n_kv_groups": 8,
-    "rope_base": 1_000_000.0,
-    "dtype": torch.bfloat16,
-}
-
-# 4 billion parameters
-QWEN3_CONFIG_4B = {
-    "vocab_size": 151_936,
-    "context_length": 40_960,
-    "emb_dim": 2560,                 # 25% larger than above
-    "n_heads": 32,                   # 2x larger than above
-    "n_layers": 36,                  # 29% larger than above
-    "hidden_dim": 9728,              # ~3x larger than above
-    "head_dim": 128,
-    "qk_norm": True,
-    "n_kv_groups": 8,
-    "rope_base": 1_000_000.0,
-    "dtype": torch.bfloat16,
-}
-
-# 8 billion parameters
-QWEN3_CONFIG_8B = {
-    "vocab_size": 151_936,
-    "context_length": 40_960,
-    "emb_dim": 4096,                 # 60% larger than above
-    "n_heads": 32,
-    "n_layers": 36,
-    "hidden_dim": 12288,             # 26% larger than above
-    "head_dim": 128,
-    "qk_norm": True,
-    "n_kv_groups": 8,
-    "rope_base": 1_000_000.0,
-    "dtype": torch.bfloat16,
-}
-
-# 14 billion parameters
-QWEN3_CONFIG_14B = {
-        "vocab_size": 151_936,
-        "context_length": 40_960,
-        "emb_dim": 5120,                 # 25% larger than above
-        "n_heads": 40,                   # 25% larger than above
-        "n_layers": 40,                  # 11% larger than above
-        "hidden_dim": 17408,             # 42% larger than above
-        "head_dim": 128,
-        "qk_norm": True,
-        "n_kv_groups": 8,
-        "rope_base": 1_000_000.0,
-        "dtype": torch.bfloat16,
-}
-
-QWEN3_CONFIG_32B = {
-        "vocab_size": 151_936,
-        "context_length": 40_960,
-        "emb_dim": 5120,
-        "n_heads": 64,                   # 60% larger than above
-        "n_layers": 64,                  # 60% larger than above
-        "hidden_dim": 25600,             # 47% larger than above
-        "head_dim": 128,
-        "qk_norm": True,
-        "n_kv_groups": 8,
-        "rope_base": 1_000_000.0,
-        "dtype": torch.bfloat16,
-}
-
-# Mixture of Experts Model
-QWEN3_CONFIG_30B_A3B = {
-    "vocab_size": 151_936,
-    "context_length": 262_144,
-    "emb_dim": 2048,
-    "n_heads": 32,
-    "n_layers": 48,
-    "head_dim": 128,
-    "qk_norm": True,
-    "n_kv_groups": 4,
-    "rope_base": 10_000_000.0,
-    "dtype": torch.bfloat16,
-    "num_experts": 128,
-    "num_experts_per_tok": 8,
-    "moe_intermediate_size": 768,
-}
-
 
 class Qwen3Model(nn.Module):
     def __init__(self, cfg):
@@ -177,10 +80,7 @@ class TransformerBlock(nn.Module):
             qk_norm=cfg["qk_norm"],
             dtype=cfg["dtype"]
         )
-        if "num_experts" in cfg and cfg["num_experts"] > 0:
-            self.ff = MoEFeedForward(cfg)
-        else:
-            self.ff = FeedForward(cfg)
+        self.ff = FeedForward(cfg)
         self.norm1 = RMSNorm(cfg["emb_dim"], eps=1e-6)
         self.norm2 = RMSNorm(cfg["emb_dim"], eps=1e-6)
 
@@ -212,60 +112,6 @@ class FeedForward(nn.Module):
         x_fc2 = self.fc2(x)
         x = nn.functional.silu(x_fc1) * x_fc2
         return self.fc3(x)
-
-
-class MoEFeedForward(nn.Module):
-    def __init__(self, cfg):
-        super().__init__()
-        self.num_experts_per_tok = cfg["num_experts_per_tok"]
-        self.num_experts = cfg["num_experts"]
-        self.emb_dim = cfg["emb_dim"]
-        self.gate = nn.Linear(cfg["emb_dim"], cfg["num_experts"], bias=False, dtype=cfg["dtype"])
-
-        self.fc1 = nn.ModuleList([nn.Linear(cfg["emb_dim"], cfg["moe_intermediate_size"], bias=False, dtype=cfg["dtype"])
-                                  for _ in range(cfg["num_experts"])])
-        self.fc2 = nn.ModuleList([nn.Linear(cfg["emb_dim"], cfg["moe_intermediate_size"], bias=False, dtype=cfg["dtype"])
-                                  for _ in range(cfg["num_experts"])])
-        self.fc3 = nn.ModuleList([nn.Linear(cfg["moe_intermediate_size"], cfg["emb_dim"], bias=False, dtype=cfg["dtype"])
-                                  for _ in range(cfg["num_experts"])])
-
-    def forward(self, x):
-        scores = self.gate(x)  # (b, seq_len, num_experts)
-        topk_scores, topk_indices = torch.topk(scores, self.num_experts_per_tok, dim=-1)
-        topk_probs = torch.softmax(topk_scores, dim=-1)
-
-        batch, seq_len, _ = x.shape
-        x_flat = x.reshape(batch * seq_len, -1)
-        out_flat = torch.zeros(batch * seq_len, self.emb_dim, device=x.device, dtype=x.dtype)
-
-        topk_indices_flat = topk_indices.reshape(-1, self.num_experts_per_tok)
-        topk_probs_flat = topk_probs.reshape(-1, self.num_experts_per_tok)
-
-        unique_experts = torch.unique(topk_indices_flat)
-
-        for expert_id_tensor in unique_experts:
-            expert_id = int(expert_id_tensor.item())
-            mask = topk_indices_flat == expert_id
-            if not mask.any():
-                continue
-
-            token_mask = mask.any(dim=-1)
-            selected_idx = token_mask.nonzero(as_tuple=False).squeeze(-1)
-            if selected_idx.numel() == 0:
-                continue
-
-            expert_input = x_flat.index_select(0, selected_idx)
-            hidden = torch.nn.functional.silu(self.fc1[expert_id](expert_input)) * self.fc2[expert_id](expert_input)
-            expert_out = self.fc3[expert_id](hidden)
-
-            mask_selected = mask[selected_idx]
-            slot_indices = mask_selected.int().argmax(dim=-1, keepdim=True)
-            selected_probs = torch.gather(topk_probs_flat.index_select(0, selected_idx), dim=-1, index=slot_indices).squeeze(-1)
-
-            out_flat.index_add_(0, selected_idx, expert_out * selected_probs.unsqueeze(-1))
-
-        return out_flat.reshape(batch, seq_len, self.emb_dim)
-
 
 class GroupedQueryAttention(nn.Module):
     def __init__(
@@ -331,58 +177,6 @@ class GroupedQueryAttention(nn.Module):
 
         context = (attn_weights @ values).transpose(1, 2).reshape(b, num_tokens, self.d_out)
         return self.out_proj(context)
-
-
-# ==============================================================================
-# RoPE implementation summary
-#
-#
-# There are two common styles to implement RoPE, which are
-# mathematically equivalent;
-# they mainly differ in how the rotation matrix pairs dimensions.
-#
-# 1) Split-halves style (this repo, Hugging Face Transformers):
-#
-#   For hidden dim d = 8 (example):
-#
-#       [ x0   x1   x2   x3   x4   x5   x6   x7 ]
-#         │    │    │    │    │    │    │    │
-#         ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼
-#        cos  cos  cos  cos  sin  sin  sin  sin
-#
-#   Rotation matrix:
-#
-#       [ cosθ   -sinθ    0      0   ... ]
-#       [ sinθ    cosθ    0      0   ... ]
-#       [  0       0    cosθ   -sinθ ... ]
-#       [  0       0    sinθ    cosθ ... ]
-#        ...
-#
-#   Here, the embedding dims are split into two halves and then
-#   each one is rotated in blocks.
-#
-#
-# 2) Interleaved (even/odd) style (original paper, Llama repo):
-#
-#   For hidden dim d = 8 (example):
-#
-#       [ x0   x1   x2   x3   x4   x5   x6   x7 ]
-#         │    │    │    │    │    │    │    │
-#         ▼    ▼    ▼    ▼    ▼    ▼    ▼    ▼
-#        cos  sin  cos  sin  cos  sin  cos  sin
-#
-#   Rotation matrix:
-#       [ cosθ  -sinθ    0      0   ... ]
-#       [ sinθ   cosθ    0      0   ... ]
-#       [  0      0    cosθ   -sinθ ... ]
-#       [  0      0    sinθ    cosθ ... ]
-#        ...
-#
-#   Here, embedding dims are interleaved as even/odd cosine/sine pairs.
-#
-# Both layouts encode the same relative positions; the only difference is how
-# dimensions are paired.
-# ==============================================================================
 
 
 def compute_rope_params(head_dim, theta_base=10_000, context_length=4096, dtype=torch.float32):
@@ -598,12 +392,6 @@ class Qwen3Tokenizer:
         self.add_thinking = add_thinking
 
         tok_file = Path(tokenizer_file_path)
-        if not tok_file.is_file() and repo_id:
-            download_from_huggingface(
-                repo_id=repo_id,
-                filename=tok_file.name,
-                local_dir=str(tok_file.parent),
-            )
         self._tok = Tokenizer.from_file(str(tok_file))
         self._special_to_id = {}
         for t in self._SPECIALS:
@@ -652,56 +440,3 @@ class Qwen3Tokenizer:
             else:
                 s += "\n<think>\n\n</think>\n\n"
         return s
-
-
-def download_from_huggingface(repo_id, filename, local_dir, revision="main"):
-    base_url = "https://huggingface.co"
-    url = f"{base_url}/{repo_id}/resolve/{revision}/{filename}"
-    Path(local_dir).mkdir(parents=True, exist_ok=True)
-    dest_path = os.path.join(local_dir, filename)
-
-    if os.path.exists(dest_path):
-        print(f"File already exists: {dest_path}")
-    else:
-        print(f"Downloading {url} to {dest_path}...")
-        response = requests.get(url, stream=True, timeout=60)
-        response.raise_for_status()
-        with open(dest_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-
-    return dest_path
-
-
-def download_from_huggingface_from_snapshots(repo_id, local_dir):
-    from huggingface_hub import hf_hub_download, snapshot_download
-    from safetensors.torch import load_file  # or your preferred loader
-
-    repo_dir = snapshot_download(repo_id=repo_id, local_dir=local_dir)
-
-    index_path = os.path.join(repo_dir, "model.safetensors.index.json")
-    single_file_path = os.path.join(repo_dir, "model.safetensors")
-
-    if os.path.exists(index_path):
-        # Multi-shard model
-        with open(index_path, "r") as f:
-            index = json.load(f)
-
-        weights_dict = {}
-        for filename in set(index["weight_map"].values()):
-            shard_path = os.path.join(repo_dir, filename)
-            shard = load_file(shard_path)
-            weights_dict.update(shard)
-    elif os.path.exists(single_file_path):
-        # Single-shard model
-        weights_file = hf_hub_download(
-            repo_id=repo_id,
-            filename="model.safetensors",
-            local_dir=local_dir,
-        )
-        weights_dict = load_file(weights_file)
-    else:
-        raise FileNotFoundError("No model.safetensors or model.safetensors.index.json found.")
-
-    return weights_dict

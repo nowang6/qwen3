@@ -1,12 +1,15 @@
 
 import time
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
 from safetensors.torch import load_file
 import onnxruntime as ort
 import numpy as np
+import onnx
+import onnxslim
 
 from llms_from_scratch.qwen3 import Qwen3Tokenizer, QWEN_CONFIG_06_B
 
@@ -58,7 +61,7 @@ def test_embedding(prompt: str, model_path: Path, use_float32: bool = False) -> 
 def export_embedding_to_onnx(
     model_path: Path,
     onnx_output_path: Path,
-    opset_version: int = 17,
+    opset_version: int = 10,
 ) -> None:
     """Export the Qwen3 token embedding layer to ONNX."""
     emb = load_embedding_weights(model_path)
@@ -68,11 +71,12 @@ def export_embedding_to_onnx(
     # emb.weight.data remains in float16
 
     # Dummy input: a small sequence of token ids
+    # Use int32 instead of int64 (torch.long) for OMG/ATC compatibility
     dummy_input = torch.randint(
         low=0,
         high=QWEN_CONFIG_06_B["vocab_size"],
-        size=(1, 8),  # (batch_size, seq_len)
-        dtype=torch.long,
+        size=(1, 10),  # (batch_size, seq_len) - seq_len fixed to 10
+        dtype=torch.int32,
     )
 
     print(f"Exporting embedding to ONNX: {onnx_output_path}")
@@ -83,8 +87,8 @@ def export_embedding_to_onnx(
         input_names=["token_ids"],
         output_names=["embeddings"],
         dynamic_axes={
-            "token_ids": {0: "batch_size", 1: "seq_len"},
-            "embeddings": {0: "batch_size", 1: "seq_len"},
+            "token_ids": {0: "batch_size"},  # seq_len fixed to 10
+            "embeddings": {0: "batch_size"},  # seq_len fixed to 10
         },
         opset_version=opset_version,
         # Specify output type as float16
@@ -94,6 +98,33 @@ def export_embedding_to_onnx(
         verbose=False,
     )
     print("ONNX export finished.")
+
+
+def slim_onnx_model(
+    onnx_model_path: Path,
+    slim_output_path: Optional[Path] = None,
+) -> Path:
+    """Use onnxslim to simplify the exported ONNX model."""
+    if slim_output_path is None:
+        slim_output_path = onnx_model_path.with_suffix(".slim.onnx")
+
+    print(f"Loading ONNX model for slimming: {onnx_model_path}")
+    model = onnx.load(str(onnx_model_path))
+
+    print("Running onnxslim.slim ...")
+    slimmed_model = onnxslim.slim(model)
+
+    # Fix Embedding input type from int64 to int32 for OMG/ATC compatibility
+    for input_tensor in slimmed_model.graph.input:
+        if input_tensor.type.tensor_type.elem_type == onnx.TensorProto.INT64:
+            print(f"Converting input '{input_tensor.name}' from int64 to int32")
+            input_tensor.type.tensor_type.elem_type = onnx.TensorProto.INT32
+
+    print(f"Saving slimmed model to {slim_output_path}")
+    onnx.save(slimmed_model, str(slim_output_path))
+
+    print("ONNX slimming finished.")
+    return slim_output_path
 
 
 def test_embedding_with_onnx(
@@ -115,8 +146,8 @@ def test_embedding_with_onnx(
     print(f"Prompt: {prompt}")
     print(f"Tokenized length: {len(token_ids)}")
 
-    # Prepare input for ONNX
-    token_tensor = torch.tensor([token_ids], dtype=torch.long)  # Add batch dimension
+    # Prepare input for ONNX (use int32 for OMG/ATC compatibility)
+    token_tensor = torch.tensor([token_ids], dtype=torch.int32)  # Add batch dimension
 
     # Load ONNX model
     print(f"Loading ONNX model from {onnx_model_path}...")
@@ -134,8 +165,10 @@ def test_embedding_with_onnx(
     print("Running ONNX inference...")
     start_time = time.time()
 
-    # Convert to appropriate numpy type for ONNX
-    if token_tensor.dtype == torch.int64:
+    # Convert to appropriate numpy type for ONNX (int32 for OMG/ATC compatibility)
+    if token_tensor.dtype == torch.int32:
+        input_data = token_tensor.numpy().astype(np.int32)
+    elif token_tensor.dtype == torch.int64:
         input_data = token_tensor.numpy().astype(np.int64)
     else:
         input_data = token_tensor.numpy()
@@ -151,7 +184,7 @@ def test_embedding_with_onnx(
 
     # Compare with PyTorch implementation (using original float16)
     print("\nComparing with PyTorch implementation...")
-    embeddings_pytorch = test_embedding(prompt, model_path, use_float32=False)
+    embeddings_pytorch = test_embedding(prompt, model_path, use_float32=True)
 
     # Calculate similarity
     similarity = torch.nn.functional.cosine_similarity(
@@ -189,10 +222,15 @@ if __name__ == "__main__":
     ONNX_PATH = Path("output/qwen3_0.6B_embedding.onnx")
     export_embedding_to_onnx(MODEL_DIR, ONNX_PATH)
 
+    # 2.5) onnxslim 简化
+    print("\n" + "=" * 50)
+    print("Slimming ONNX model:")
+    print("=" * 50)
+    SLIM_ONNX_PATH = Path("output/qwen3_0.6B_embedding.slim.onnx")
+    slim_onnx_model(ONNX_PATH, SLIM_ONNX_PATH)
+
     # 3) 测试 ONNX 模型
     print("\n" + "=" * 50)
     print("Testing ONNX model:")
     print("=" * 50)
-    test_embedding_with_onnx(SAMPLE_PROMPT, MODEL_DIR, ONNX_PATH)
-    
-    
+    test_embedding_with_onnx(SAMPLE_PROMPT, MODEL_DIR, SLIM_ONNX_PATH)

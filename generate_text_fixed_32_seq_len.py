@@ -39,6 +39,35 @@ print(f"Using device: {device}")
 model.to(device);
 model.eval()  # Set to evaluation mode
 
+# Export model to ONNX format
+print("Exporting model to ONNX format...")
+try:
+    # Define dummy input with fixed sequence length of 32
+    dummy_input = torch.randint(0, QWEN_CONFIG_06_B_FIXED_32['vocab_size'], (1, 32), device=device)
+
+    # Define ONNX export path
+    onnx_path = Path(model_path, "qwen3_0.6b_fixed_32.onnx")
+
+    # Export to ONNX
+    torch.onnx.export(
+        model,
+        dummy_input,
+        str(onnx_path),
+        input_names=['input_ids'],
+        output_names=['logits'],
+        dynamic_axes={
+            'input_ids': {0: 'batch_size'},
+            'logits': {0: 'batch_size'}
+        },
+        opset_version=11,
+        do_constant_folding=True
+    )
+    print(f"Model successfully exported to ONNX format: {onnx_path}")
+    print(f"ONNX model file size: {onnx_path.stat().st_size / (1024*1024):.2f} MB")
+except Exception as e:
+    print(f"Error exporting to ONNX: {e}")
+    print("Continuing with PyTorch model...")
+
 
 USE_INSTRUCT_MODEL = False
 USE_REASONING_MODEL = True

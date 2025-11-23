@@ -167,8 +167,14 @@ class GroupedQueryAttention(nn.Module):
         keys = apply_rope(keys, cos, sin)
 
         # Expand K and V to match number of heads
-        keys = keys.repeat_interleave(self.group_size, dim=1)
-        values = values.repeat_interleave(self.group_size, dim=1)
+        # keys = keys.repeat_interleave(self.group_size, dim=1)
+        # values = values.repeat_interleave(self.group_size, dim=1)
+        # Use unsqueeze + expand + reshape instead of repeat_interleave for ONNX compatibility
+        keys = keys.unsqueeze(2).expand(b, self.num_kv_groups, self.group_size, num_tokens, self.head_dim)
+        keys = keys.reshape(b, self.num_heads, num_tokens, self.head_dim)
+        values = values.unsqueeze(2).expand(b, self.num_kv_groups, self.group_size, num_tokens, self.head_dim)
+        values = values.reshape(b, self.num_heads, num_tokens, self.head_dim)
+
 
         # Attention
         attn_scores = queries @ keys.transpose(2, 3)
@@ -237,6 +243,7 @@ class RMSNorm(nn.Module):
             x = x.to(torch.float32)
 
         variance = x.pow(2).mean(dim=-1, keepdim=True)
+        variance = variance.expand_as(x)
         norm_x = x * torch.rsqrt(variance + self.eps)
         norm_x = norm_x * self.scale
 

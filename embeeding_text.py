@@ -1,4 +1,5 @@
 
+
 import time
 from pathlib import Path
 from typing import Optional
@@ -87,8 +88,8 @@ def export_embedding_to_onnx(
         input_names=["token_ids"],
         output_names=["embeddings"],
         dynamic_axes={
-            "token_ids": {0: "batch_size"},  # seq_len fixed to 10
-            "embeddings": {0: "batch_size"},  # seq_len fixed to 10
+            "token_ids": {0: "batch_size", 1: "seq_length"},  # Allow variable seq_length
+            "embeddings": {0: "batch_size", 1: "seq_length"},  # Allow variable seq_length
         },
         opset_version=opset_version,
         # Specify output type as float16

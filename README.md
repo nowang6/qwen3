@@ -29,6 +29,12 @@ python export_onnx_qwen3.py --device_str cpu --dtype float32 --model_path models
 ```sh
 ./omg \
   --framework=5 \
+  --model="simple_embedding_model_fp32.onnx" \
+  --output="simple_embedding_model_fp32" \
+  --input_shape="input_ids:1,32"
+
+./omg \
+  --framework=5 \
   --model="qwen3_0.6b_transformer_block_0.onnx" \
   --output="qwen3_0.6b_transformer_block_0" \
   --input_shape="embeddings:1,32,1024"

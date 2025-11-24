@@ -15,5 +15,6 @@ dependencies = [
     "numpy<2",
     "onnxruntime>=1.23.2",
     "onnxslim>=0.1.74",
+    "optimum>=2.0.0",
 ]
 
